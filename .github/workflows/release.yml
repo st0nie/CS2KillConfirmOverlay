@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup --no-progress -y
+
+      - name: Check release tag matches manifest version
+        shell: pwsh
+        run: |
+          $ver = ([xml](Get-Content Package/Package.appxmanifest)).Package.Identity.Version
+          $tag = $env:RELEASE_TAG.TrimStart('v')
+          if ($tag -ne $ver) { throw "Release tag $env:RELEASE_TAG does not match manifest version $ver" }
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+      - name: Build installer
+        shell: pwsh
+        run: .\Build-Installer.ps1 -DisableSigning
+
+      - name: Upload assets to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = ([xml](Get-Content Package/Package.appxmanifest)).Package.Identity.Version
+          $exe = "Installer/Output/KillConfirmGameBar_Setup_$ver.exe"
+          $zip = "KillConfirmGameBar_Transfer_$ver.zip"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          if (-not (Test-Path $zip)) { throw "Missing $zip" }
+          gh release upload $env:RELEASE_TAG $exe $zip --clobber
