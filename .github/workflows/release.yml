@@ -22,6 +22,38 @@ jobs:
       - name: Install Inno Setup 6
         run: choco install innosetup --no-progress -y
 
+      - name: Download offline prerequisite packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $VclibsRoot = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) "Vclibs"
+          New-Item -ItemType Directory -Force -Path $VclibsRoot | Out-Null
+
+          # Microsoft.VCLibs.140.00.UWPDesktop — official winget-cli release asset
+          $depsZip = Join-Path $env:TEMP "DesktopAppInstaller_Dependencies.zip"
+          Invoke-WebRequest -Uri "https://github.com/microsoft/winget-cli/releases/download/v1.9.25180/DesktopAppInstaller_Dependencies.zip" -OutFile $depsZip
+          $depsDir = Join-Path $env:TEMP "deps"
+          Expand-Archive -Path $depsZip -DestinationPath $depsDir -Force
+          Copy-Item -LiteralPath (Join-Path $depsDir "x64\Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64.appx") -Destination (Join-Path $VclibsRoot "vclibs.appx") -Force
+
+          # Microsoft.VCLibs.140.00 — pinned mirror of Microsoft-signed package
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/harryeffinpotter/PC-Gaming-Redists/main/Microsoft.VCLibs.140.00_14.0.33519.0_x64.appx" -OutFile (Join-Path $VclibsRoot "vclibs2.appx")
+
+          # Xbox Game Bar bundle — fresh Microsoft Store CDN link generated per run
+          $page = Invoke-WebRequest -Uri "https://store.rg-adguard.net/api/GetFiles" -Method Post `
+              -Body "type=ProductId&url=9NZKPSTSNW4P&ring=RP&lang=en-US" `
+              -ContentType "application/x-www-form-urlencoded" `
+              -Headers @{ "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"; "Referer" = "https://store.rg-adguard.net/" }
+          $links = [regex]::Matches($page.Content, 'href="([^"]*\.appxbundle[^"]*)"[^>]*>Microsoft\.XboxGamingOverlay_([0-9.]+)_neutral_~_8wekyb3d8bbwe\.appxbundle') | ForEach-Object {
+              [pscustomobject]@{ Link = $_.Groups[1].Value; Version = [version]$_.Groups[2].Value }
+          }
+          $best = $links | Where-Object { $_.Version -ge [version]"7.326.6011.0" } | Sort-Object Version -Descending | Select-Object -First 1
+          if (-not $best) { throw "Xbox Game Bar bundle not found or below minimum version 7.326.6011.0" }
+          Invoke-WebRequest -Uri $best.Link -OutFile (Join-Path $VclibsRoot "gamebar.AppxBundle")
+          Write-Host "Game Bar bundle: $($best.Version)"
+
+          Get-ChildItem -LiteralPath $VclibsRoot | ForEach-Object { Write-Host ("{0} {1}" -f $_.Name, $_.Length) }
+
       - name: Export offline prerequisite packages
         shell: pwsh
         run: |
