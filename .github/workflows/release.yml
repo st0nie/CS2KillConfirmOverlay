@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-11
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +21,32 @@ jobs:
 
       - name: Install Inno Setup 6
         run: choco install innosetup --no-progress -y
+
+      - name: Export offline prerequisite packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $VclibsRoot = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) "Vclibs"
+          New-Item -ItemType Directory -Force -Path $VclibsRoot | Out-Null
+
+          function Export-AppxSourceFile {
+              param([string]$PackageName, [string]$FilePattern, [string]$Destination)
+              $pkg = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue |
+                  Sort-Object Version -Descending | Select-Object -First 1
+              if (-not $pkg) { throw "Prerequisite package $PackageName is not installed on this runner" }
+              $candidates = @(Get-ChildItem -LiteralPath $pkg.InstallLocation -Filter $FilePattern -File -ErrorAction SilentlyContinue)
+              if (-not $candidates) {
+                  $candidates = @(Get-ChildItem -LiteralPath (Join-Path $env:ProgramFiles "WindowsApps") -Filter $FilePattern -File -ErrorAction SilentlyContinue)
+              }
+              $file = $candidates | Select-Object -First 1
+              if (-not $file) { throw "Source package file for $PackageName not found on runner (pattern: $FilePattern)" }
+              Copy-Item -LiteralPath $file.FullName -Destination $Destination -Force
+              Write-Host "Exported $PackageName ($($pkg.Version)) -> $Destination"
+          }
+
+          Export-AppxSourceFile -PackageName "Microsoft.VCLibs.140.00.UWPDesktop" -FilePattern "Microsoft.VCLibs.140.00.UWPDesktop*.appx" -Destination (Join-Path $VclibsRoot "vclibs.appx")
+          Export-AppxSourceFile -PackageName "Microsoft.VCLibs.140.00" -FilePattern "Microsoft.VCLibs.140.00_*.appx" -Destination (Join-Path $VclibsRoot "vclibs2.appx")
+          Export-AppxSourceFile -PackageName "Microsoft.XboxGamingOverlay" -FilePattern "Microsoft.XboxGamingOverlay*.appxbundle" -Destination (Join-Path $VclibsRoot "gamebar.AppxBundle")
 
       - name: Check release tag matches manifest version
         shell: pwsh
